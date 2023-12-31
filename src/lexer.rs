@@ -1,7 +1,8 @@
 use std::cmp::{max, min};
 use std::fmt;
+use std::fmt::{Display, Formatter};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     Err,
 
@@ -40,11 +41,45 @@ pub enum TokenKind {
     RBracket,
 }
 
+impl fmt::Display for TokenKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", match self {
+            TokenKind::Whitespace => "whitespace",
+            TokenKind::Newline => "newline",
+            TokenKind::KwFunc => "func",
+            TokenKind::KwGlobal => "global",
+            TokenKind::KwWhile => "while",
+            TokenKind::KwIf => "if",
+            TokenKind::Ident => "identifier",
+            TokenKind::IntLit => "int literal",
+            TokenKind::FloatLit => "float literal",
+            TokenKind::BoolLit => "bool literal",
+            TokenKind::StrLit => "string literal",
+            TokenKind::Equals => "=",
+            TokenKind::AddEquals => "+=",
+            TokenKind::SubEquals => "-=",
+            TokenKind::MulEquals => "*=",
+            TokenKind::DivEquals => "/=",
+            TokenKind::Plus => "+",
+            TokenKind::Minus => "-",
+            TokenKind::Star => "*",
+            TokenKind::Slash => "/",
+            TokenKind::Dot => ".",
+            TokenKind::Comma => ",",
+            TokenKind::LParen => "(",
+            TokenKind::RParen => ")",
+            TokenKind::LBracket => "{",
+            TokenKind::RBracket => "}",
+            _ => unreachable!(),
+        })
+    }
+}
+
 plex::lexer! {
     fn next_token(_text: 'a) -> TokenKind;
 
     r"[ \t]+" => TokenKind::Whitespace,
-    r"[\n\r]" => TokenKind::Newline,
+    r"(\r\n)|([\n\r])" => TokenKind::Newline,
 
     r"func" => TokenKind::KwFunc,
     r"global" => TokenKind::KwGlobal,
@@ -101,33 +136,16 @@ pub struct Token {
 }
 
 #[derive(Clone)]
-pub struct LexerError<'a> {
-    pub origin: &'a Lexer<'a>,
+pub struct LexerError {
     pub val: String,
     pub span: Span
-}
-
-impl fmt::Display for LexerError<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let lines: Vec<String> = self.origin.code.split("\n").map(str::to_string).collect();
-        let line = lines.get(self.span.ll).unwrap_or_else(|| {
-            panic!("Line is out of bounds!");
-        }).clone();
-        write!(f,
-            "Unknown token \"{}\" at {}:{}-{}\n| {}\n| {}{}",
-            self.val,
-            self.span.ll + 1, self.span.hc + 1, self.span.hc + self.val.len() + 1,
-            line,
-            " ".repeat(self.span.hc), "~".repeat(self.val.len())
-        )
-    }
 }
 
 pub struct Lexer<'a> {
     code: &'a str,
     remaining: &'a str,
     result: Vec<Token>,
-    errors: Vec<LexerError<'a>>,
+    errors: Vec<LexerError>,
     pos: Span,
     chr: usize,
 }
@@ -145,6 +163,7 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn parse(&mut self) {
+        if self.result.len() > 0 || self.errors.len() > 0 { return; }
         while self.next() { }
     }
 
@@ -178,7 +197,6 @@ impl<'a> Lexer<'a> {
                             }
                         }
                         let err = LexerError {
-                            origin: self,
                             val,
                             span: pos
                         };

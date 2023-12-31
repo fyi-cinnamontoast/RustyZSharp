@@ -1,4 +1,3 @@
-func Main() {
-    String hello = "Hello, World!\n"
-    Print(hello)
-}
+String hello "Hello, World!"
+String hello = "Hello, World!"
+String hello "Hello, World!"
