@@ -8,5 +8,5 @@ RustyZSharp - JIT implementation of [ZSharp](https://github.com/sam-astro/Z-Shar
 Todo:
 - [X] Lexer
   - Error Handling
-- [ ] Parser & AST
+- [ ] Parser & AST (Partially complete)
 - [ ] AST to LLVM-IR
