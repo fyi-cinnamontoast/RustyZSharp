@@ -1,6 +1,4 @@
-use crate::lexer::Span;
-
-pub type Block = Vec<Expr>;
+use crate::util::Span;
 
 #[derive(Debug, Clone)]
 pub struct Expr {
@@ -12,12 +10,17 @@ pub struct Expr {
 pub enum ExprKind {
     Global(Box<Expr>),
 
-    FuncDef(Vec<Expr>, Vec<String>, Block),
-    VarDef(Box<Expr>, String, Box<Expr>),
+    Block(Vec<Expr>),
+
+    FuncDef(Box<Expr>, Vec<Expr>, Box<Expr>),
+    VarDef(Box<Expr>, Box<Expr>, Box<Expr>),
 
     Name(String),
 
     IntLit(i64),
     FloatLit(f64),
+    BoolLit(bool),
     StrLit(String),
+
+    Call(Box<Expr>, Vec<Expr>),
 }

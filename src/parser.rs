@@ -1,20 +1,24 @@
-use std::ops::{Add, Range};
+use std::io::stdout;
+use std::ops::{Range};
 use std::slice::SliceIndex;
-use crate::ast::{Block, Expr, ExprKind};
-use crate::lexer::{LexerError, Span, Token, TokenKind};
+use crate::ast::{Expr, ExprKind};
+use crate::lexer::{Token, TokenKind};
+use crate::util::{Span};
 
 #[derive(Clone)]
 pub struct ParserError {
     pub msg: String,
-    pub pos: (usize, Span), // Line, Column(High, Low)
+    pub pos: Span,
 }
 
 pub struct Parser<'a> {
     code: &'a str,
-    result: Block,
+    result: Vec<Expr>,
     errors: Vec<ParserError>,
     tokens: Vec<Token>,
     pos: usize,
+
+    span_stack: Vec<Span>
 }
 
 impl<'a> Parser<'a> {
@@ -24,178 +28,276 @@ impl<'a> Parser<'a> {
             result: vec![],
             errors: vec![],
             tokens,
-            pos: 0usize
+            pos: 0usize,
+            span_stack: vec![]
         }
     }
 
     pub fn parse(&mut self) {
         if self.result.len() > 0 || self.errors.len() > 0 { return; }
 
-        while self.pos < self.tokens.len() - 1 {
+        while self.pos < self.tokens.len() {
             let Some(def) = self.parse_define() else { continue; };
             self.result.push(def);
         }
     }
 
-    pub fn parse_define(&mut self) -> Option<Expr> {
-        let is_var: bool;
-        if !self.matches(&[ TokenKind::KwFunc, TokenKind::Ident ]) {
-            let mut found = self.current().val;
-            let start = self.pos;
-            self.next();
-            while !self.matches(&[ TokenKind::Ident ]) {
-                let tok = self.next();
-                found += tok.val.as_str();
-            }
-            let end = self.pos - 1;
-            while !self.matches(&[ TokenKind::Newline ]) {
+    fn parse_define(&mut self) -> Option<Expr> {
+        let Some(tok) =
+            self.require(&[ TokenKind::Ident, TokenKind::KwGlobal, TokenKind::KwFunc ])
+            else { todo!() };
+        match tok.kind {
+            TokenKind::Ident => { self.parse_var() }
+            TokenKind::KwGlobal => {
+                self.begin();
                 self.next();
+                let Some(var) = self.parse_var() else { todo!() };
+                Some(Expr {
+                    kind: ExprKind::Global(Box::new(var)),
+                    span: self.end()
+                })
             }
-            let msg = format!(r#"Expected "func", "global" or an identifier found "{}""#, found);
-            self.error(msg, start..end);
-            return None;
-        } else {
-            let tok = self.current();
-            is_var = match tok.kind {
-                TokenKind::KwFunc => false,
-                TokenKind::Ident => true,
-                _ => unreachable!()
-            };
-        }
-        if is_var {
-            let var_type = self.next();
-            let name = self.parse_name();
-            self.require(&[ TokenKind::Equals ]);
-            let val = self.parse_term();
-            self.require(&[ TokenKind::Newline ]);
-            Some(Expr {
-                kind: ExprKind::VarDef(Box::new(name), var_type.val, Box::new(val.clone())),
-                span: Span{ ll: var_type.pos.chr.ll, hc: val.span.hc }
-            })
-        }
-        else {
-            let name = self.parse_complex_name();
-            todo!();
-        }
-    }
-
-    pub fn parse_var_def() {
-
-    }
-
-    pub fn parse_term(&mut self) -> Expr {
-        if self.matches(&[
-            TokenKind::IntLit, TokenKind::FloatLit, TokenKind::StrLit
-        ]) {
-            self.parse_atom()
-        }
-        else {
-            todo!()
-        }
-    }
-
-    pub fn parse_atom(&mut self) -> Expr {
-        let token = self.next();
-        match token.kind {
-            TokenKind::IntLit => Expr {
-                kind: ExprKind::IntLit(token.val.parse().unwrap()),
-                span: token.pos.chr
-            },
-            TokenKind::FloatLit => Expr {
-                kind: ExprKind::FloatLit(token.val.parse().unwrap()),
-                span: token.pos.chr
-            },
-            TokenKind::StrLit => Expr {
-                kind: ExprKind::StrLit(token.val[1..token.val.len()-1].to_string()),
-                span: token.pos.chr
-            },
+            TokenKind::KwFunc => { self.parse_func() }
             _ => unreachable!()
         }
     }
 
-    pub fn parse_name(&mut self) -> Expr {
-        let Some(name) = self.match_current(&[ TokenKind::Ident ]) else {
+    fn parse_block(&mut self) -> Option<Expr> {
+        self.begin();
+        self.require_and_next(&[ TokenKind::LBracket ]);
+        todo!();
+    }
+
+    fn parse_func(&mut self) -> Option<Expr> {
+        self.begin();
+        if self.require_and_next(&[ TokenKind::KwFunc ]).is_none() {
             todo!()
-        };
-        self.next();
-        Expr {
-            kind: ExprKind::Name(name.val.clone()),
-            span: name.pos.chr.clone()
+        }
+        let Some(name) = self.parse_name() else { todo!() };
+        todo!()
+    }
+
+    fn parse_var(&mut self) -> Option<Expr> {
+        self.begin();
+        let Some(r#type) =
+            self.parse_ident()
+            else { todo!() };
+        let Some(name) =
+            self.parse_name()
+            else { todo!() };
+        self.require_and_next(&[ TokenKind::EqualSign ]);
+        let Some(val) =
+            self.parse_expr()
+            else { todo!() };
+        self.require_and_next(&[ TokenKind::Newline ]);
+        Some(Expr {
+            kind: ExprKind::VarDef(Box::new(name), Box::new(r#type), Box::new(val)),
+            span: self.end()
+        })
+    }
+
+    fn parse_expr(&mut self) -> Option<Expr> {
+        let Some(tok) =
+            self.matches(&[
+                TokenKind::IntLit, TokenKind::FloatLit, TokenKind::BoolLit, TokenKind::StrLit
+            ])
+            else { todo!() };
+        match tok.kind {
+            TokenKind::IntLit |
+            TokenKind::FloatLit |
+            TokenKind::BoolLit |
+            TokenKind::StrLit => self.parse_atom(),
+            _ => unreachable!()
         }
     }
 
-    pub fn parse_complex_name(&mut self) -> Vec<Expr> {
-        let mut name: Vec<Expr> = vec![];
-        let first = self.parse_name();
-        name.push(first);
-        while self.matches(&[ TokenKind::Dot ]) {
-            let next = self.parse_name();
-            name.push(next);
+    fn parse_atom(&mut self) -> Option<Expr> {
+        self.begin();
+        let Some(atom) =
+            self.require_and_next(&[
+                TokenKind::IntLit, TokenKind::FloatLit, TokenKind::BoolLit, TokenKind::StrLit
+            ])
+            else { todo!() };
+        match atom.kind {
+            TokenKind::IntLit => {
+                if let Ok(v) = atom.val.parse() {
+                    Some(Expr {
+                        kind: ExprKind::IntLit(v),
+                        span: self.end()
+                    })
+                }
+                else { todo!() }
+            }
+            TokenKind::FloatLit => {
+                if let Ok(v) = atom.val.parse() {
+                    Some(Expr {
+                        kind: ExprKind::FloatLit(v),
+                        span: self.end()
+                    })
+                }
+                else { todo!() }
+            }
+            TokenKind::BoolLit => {
+                Some(Expr {
+                    kind: ExprKind::BoolLit(
+                        match atom.val.as_str() {
+                            "True" => true,
+                            "False" => false,
+                            _ => unreachable!()
+                        }
+                    ),
+                    span: self.end()
+                })
+            }
+            TokenKind::StrLit => Some(Expr {
+                kind: ExprKind::StrLit(atom.val[1..atom.val.len()-1].to_string()),
+                span: self.end()
+            }),
+            _ => unreachable!()
+        }
+    }
+
+    fn parse_name(&mut self) -> Option<Expr> {
+        self.begin();
+        let Some(first) =
+            self.require_and_next(&[ TokenKind::Ident ])
+            else { todo!() };
+        let mut res = vec![ first.val ];
+        while self.matches(&[ TokenKind::Dot ]).is_some() {
             self.next();
+            let Some(ident) =
+                self.require_and_next(&[ TokenKind::Ident ])
+                else {todo!()};
+            res.push(ident.val);
         }
-        self.rollback1();
-        name
+        Some(Expr {
+            kind: ExprKind::Name(res.join(".")),
+            span: self.end()
+        })
     }
 
-    pub fn get(&self, index: usize) -> Token {
-        self.tokens.get(index).unwrap().clone()
+    fn parse_ident(&mut self) -> Option<Expr> {
+        self.begin();
+        let Some(ident) =
+            self.require_and_next(&[ TokenKind::Ident ])
+            else { todo!() };
+        Some(Expr {
+            kind: ExprKind::Name(ident.val),
+            span: self.end()
+        })
     }
 
-    pub fn current(&self) -> Token {
-        self.get(self.pos)
+    fn get(&self, index: usize) -> Option<Token> {
+        match self.tokens.get(index) {
+            Some(token) => Some(token.clone()),
+            None => None
+        }
     }
 
-    pub fn next(&mut self) -> Token {
-        let token = self.current();
-        self.pos += 1;
-        return token;
+    fn current(&mut self) -> Option<Token> {
+        match self.get(self.pos) {
+            Some(token) => Some(token),
+            None => { None }
+        }
+    }
+
+    fn next(&mut self) -> Option<Token> {
+        match self.current() {
+            Some(token) => {
+                self.pos += 1;
+                if let Some(last) = self.span_stack.last_mut() {
+                    last.hi = token.span.hi;
+                }
+                Some(token)
+            },
+            None => None
+        }
     }
 
     #[inline(always)]
-    pub fn rollback(&mut self, offset: usize) { self.pos -= offset; }
+    fn rollback(&mut self, offset: usize) { self.pos -= offset; }
     #[inline(always)]
-    pub fn rollback1(&mut self) { self.rollback(1); }
+    fn rollback1(&mut self) { self.rollback(1); }
 
-    pub fn matches(&self, expected: &'a [TokenKind]) -> bool {
-        let token = self.current();
+    fn matches(&mut self, expected: &'a [TokenKind]) -> Option<Token> {
+        let Some(token) = self.current() else { return None; };
         for expect in expected {
             if token.kind == *expect {
-                return true;
+                return Some(token);
             }
         }
-        return false;
+        return None;
     }
 
-    pub fn match_current(&self, expected: &'a [TokenKind]) -> Option<Token> {
-        if self.matches(expected) { Some(self.current()) }
+    fn skip_until(&mut self, expect: &'a [ TokenKind ]) -> Option<Token> {
+        while self.matches(expect).is_none() && self.current().is_some() {
+            self.next();
+        }
+        return self.current();
+    }
+
+    fn skip_while(&mut self, expect: &'a [ TokenKind ]) -> Option<Token> {
+        while self.matches(expect).is_some() {
+            self.next();
+        }
+        return self.current();
+    }
+
+    fn require(&mut self, expected: &'a [TokenKind]) -> Option<Token> {
+        match self.matches(expected) {
+            Some(token) => Some(token),
+            None => {
+                let current = if let Some(tok) = self.current() { tok.kind.to_string() } else { "EOF".to_string() };
+                self.error(
+                    format!(
+                        "Expected `{}`, found `{}`",
+                        expected.iter().map(|kind| format!("{}", kind)).collect::<Vec<String>>().join("`, `"),
+                        current,
+                    ),
+                    self.pos..self.pos
+                );
+                None
+            }
+        }
+    }
+
+    fn require_or(&mut self, expected: &'a [TokenKind], cb: fn()) {
+        if self.require(expected).is_none() {
+            cb()
+        }
+    }
+
+    fn require_and_next(&mut self, expected: &'a [TokenKind]) -> Option<Token> {
+        if let Some(token) = self.require(expected) {
+            self.next();
+            Some(token)
+        }
         else { None }
     }
 
-    pub fn require(&mut self, expected: &'a [TokenKind]) {
-        if !self.matches(expected) {
-            let current = self.current();
-            self.error(
-                format!(
-                    "Unexpected token `{}`, required `{}`",
-                    current.val,
-                    expected.iter().map(|kind| format!("{}", kind)).collect::<Vec<String>>().join("`, `")
-                ),
-                self.pos..self.pos
-            );
-        }
-        else { self.next(); }
-    }
-
-    pub fn error(&mut self, msg: String, span: Range<usize>) {
-        let low = self.get(span.start);
-        let high = self.get(span.end);
+    fn error(&mut self, msg: String, span: Range<usize>) {
+        let low = self.get(span.start).unwrap();
+        let high = self.get(span.end).unwrap();
         self.errors.push(ParserError {
             msg,
-            pos: (low.pos.ln.hc, Span{ ll: low.pos.col.ll, hc: high.pos.col.hc })
+            pos: low.span | high.span
         });
     }
 
-    pub fn result(&self) -> Result<Block, Vec<ParserError>> {
+    fn begin(&mut self) {
+        let Some(current) = self.current() else { return; };
+        self.span_stack.push(current.span.clone())
+    }
+
+    fn end(&mut self) -> Span {
+        let Some(res) = self.span_stack.pop() else { panic!() };
+        if let Some(last) = self.span_stack.last_mut() {
+            last.hi = res.hi;
+        }
+        res
+    }
+
+    pub fn result(&self) -> Result<Vec<Expr>, Vec<ParserError>> {
         if self.errors.is_empty() { Ok(self.result.clone()) }
         else { Err(self.errors.clone()) }
     }

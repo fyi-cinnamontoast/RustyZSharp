@@ -3,13 +3,6 @@
 version = 3
 
 [[package]]
-name = "RustyZSharp"
-version = "0.1.0"
-dependencies = [
- "plex",
-]
-
-[[package]]
 name = "bit-set"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -69,6 +62,13 @@ checksum = "29cc2771cc9f5fb0061cdedc05a37170254694dffec6b89920a6e767f08c4220"
 dependencies = [
  "bit-set",
  "vec_map",
+]
+
+[[package]]
+name = "rusty-zsharp"
+version = "0.1.0"
+dependencies = [
+ "plex",
 ]
 
 [[package]]

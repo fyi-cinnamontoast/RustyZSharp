@@ -1,6 +1,7 @@
 use std::cmp::{max, min};
 use std::fmt;
 use std::fmt::{Display, Formatter};
+use crate::util::{Span};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
@@ -13,6 +14,7 @@ pub enum TokenKind {
     KwGlobal,
     KwWhile,
     KwIf,
+    KwReturn,
 
     Ident,
 
@@ -21,7 +23,7 @@ pub enum TokenKind {
     BoolLit,
     StrLit,
 
-    Equals,
+    EqualSign,
     AddEquals,
     SubEquals,
     MulEquals,
@@ -55,7 +57,7 @@ impl fmt::Display for TokenKind {
             TokenKind::FloatLit => "float literal",
             TokenKind::BoolLit => "bool literal",
             TokenKind::StrLit => "string literal",
-            TokenKind::Equals => "=",
+            TokenKind::EqualSign => "=",
             TokenKind::AddEquals => "+=",
             TokenKind::SubEquals => "-=",
             TokenKind::MulEquals => "*=",
@@ -81,11 +83,6 @@ plex::lexer! {
     r"[ \t]+" => TokenKind::Whitespace,
     r"(\r\n)|([\n\r])" => TokenKind::Newline,
 
-    r"func" => TokenKind::KwFunc,
-    r"global" => TokenKind::KwGlobal,
-    r"while" => TokenKind::KwWhile,
-    r"if" => TokenKind::KwIf,
-
     r"[a-zA-Z_][a-zA-Z0-9_]*" => TokenKind::Ident,
 
     r"[0-9]+" => TokenKind::IntLit,
@@ -93,7 +90,7 @@ plex::lexer! {
     r"True|False" => TokenKind::BoolLit,
     r#"["][^"]*["]"# => TokenKind::StrLit,
 
-    r"=" => TokenKind::Equals,
+    r"=" => TokenKind::EqualSign,
     r"\+=" => TokenKind::AddEquals,
     r"-=" => TokenKind::SubEquals,
     r"\*=" => TokenKind::MulEquals,
@@ -116,23 +113,10 @@ plex::lexer! {
 }
 
 #[derive(Debug, Clone)]
-pub struct Span {
-    pub ll: usize,          // Low | Line
-    pub hc: usize,          // High | Column
-}
-
-#[derive(Debug, Clone)]
-pub struct TokenPos {
-    pub chr: Span,
-    pub ln: Span,
-    pub col: Span,
-}
-
-#[derive(Debug, Clone)]
 pub struct Token {
     pub val: String,
     pub kind: TokenKind,
-    pub pos: TokenPos,
+    pub span: Span,
 }
 
 #[derive(Clone)]
@@ -157,7 +141,7 @@ impl<'a> Lexer<'a> {
             remaining: s,
             result: vec![],
             errors: vec![],
-            pos: Span { ll: 0usize, hc: 0usize },
+            pos: Span { lo: 0usize, hi: 0usize },
             chr: 0usize,
         }
     }
@@ -173,26 +157,45 @@ impl<'a> Lexer<'a> {
                 let len = self.remaining.len() - new_remaining.len();
                 let mut val = self.remaining[..len].to_string();
                 let mut pos = self.pos.clone();
-                self.pos.hc += len;
+                self.pos.hi += len;
                 self.chr += len;
                 self.remaining = new_remaining;
-                match kind {
-                    TokenKind::Whitespace => continue,
+                let kind = match kind.clone() {
+                    TokenKind::Whitespace => { continue },
                     TokenKind::Newline => {
-                        self.pos.ll += 1;
-                        self.pos.hc = 0;
+                        self.pos.lo += 1;
+                        self.pos.hi = 0;
                         if let Some(last) = self.result.last() {
                             match last.kind {
-                                TokenKind::Newline => continue,
-                                _ => {}
+                                TokenKind::Newline |
+                                TokenKind::LBracket |
+                                TokenKind::RBracket |
+                                TokenKind::LParen |
+                                TokenKind::RParen |
+                                TokenKind::EqualSign |
+                                TokenKind::AddEquals |
+                                TokenKind::SubEquals |
+                                TokenKind::MulEquals |
+                                TokenKind::DivEquals => continue,
+                                _ => { kind }
                             }
+                        } else { continue }
+                    },
+                    TokenKind::Ident => {
+                        match val.as_str() {
+                            "global" => TokenKind::KwGlobal,
+                            "func" => TokenKind::KwFunc,
+                            "if" => TokenKind::KwIf,
+                            "while" => TokenKind::KwWhile,
+                            "return" => TokenKind::KwReturn,
+                            _ => kind
                         }
                     },
                     TokenKind::Err => {
                         if let Some(last) = self.errors.last().clone() {
-                            if last.span.hc + last.val.len() == pos.hc {
+                            if last.span.hi + last.val.len() == pos.hi {
                                 val = format!("{}{}", last.val, val);
-                                pos.hc = last.span.hc;
+                                pos.hi = last.span.hi;
                                 self.errors.remove(self.errors.len() - 1);
                             }
                         }
@@ -203,16 +206,12 @@ impl<'a> Lexer<'a> {
                         self.errors.push(err.clone());
                         continue;
                     }
-                    _ => {},
-                }
+                    _ => { kind },
+                };
                 self.result.push(Token {
                     val,
                     kind,
-                    pos: TokenPos {
-                        chr: Span { ll: self.chr - len, hc: self.chr, },
-                        ln: Span { ll: pos.ll, hc: self.pos.ll, },
-                        col: Span { ll: pos.hc, hc: self.pos.hc, }
-                    }
+                    span: Span { lo: self.chr - len, hi: self.chr, },
                 });
                 return true;
             } else {
